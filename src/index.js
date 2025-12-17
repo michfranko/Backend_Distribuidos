@@ -4,6 +4,7 @@ const cors = require('cors');
 const pool = require('./db');
 const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
+const multer = require('multer');
 
 
 const app = express();
@@ -24,6 +25,20 @@ app.use(cors({
     return callback(null, true);
   }
 }));
+
+// --- Configuración de Multer para subida de archivos ---
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, 'uploads/'); // Asegúrate de que la carpeta 'uploads' exista en la raíz de tu proyecto
+  },
+  filename: function (req, file, cb) {
+    // Genera un nombre de archivo único para evitar colisiones
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + '-' + file.originalname);
+  }
+});
+
+const upload = multer({ storage: storage });
 
 
 app.use(express.json());
@@ -217,7 +232,7 @@ app.delete('/api/users/:id', async (req, res) => {
 app.get('/api/resources', async (req, res) => {
   try {
     const query = `
-      SELECT r.id, r.filename, r.upload_date, r.user_id, u.username, r.category_id, c.name as category_name
+      SELECT r.id, r.filename, r.filepath, r.upload_date, r.user_id, u.username, r.category_id, c.name as category_name
       FROM resources r
       JOIN users u ON r.user_id = u.id
       JOIN categories c ON r.category_id = c.id
@@ -233,20 +248,27 @@ app.get('/api/resources', async (req, res) => {
 
 app.post(
   '/api/resources',
-  body('filename').notEmpty().withMessage('El nombre del archivo es obligatorio.').trim(),
+  upload.single('file'), // Middleware de Multer para un solo archivo llamado 'file'
   body('user_id').isInt({ gt: 0 }).withMessage('El ID de usuario debe ser un entero positivo.'),
   body('category_id').isInt({ gt: 0 }).withMessage('El ID de categoría debe ser un entero positivo.'),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      // Si hay errores de validación, los retornamos
       return res.status(400).json({ message: errors.array()[0].msg });
     }
+    if (!req.file) {
+      // Si no se subió ningún archivo, retornamos un error
+      return res.status(400).json({ message: 'No se ha subido ningún archivo.' });
+    }
 
-    const { filename, user_id, category_id } = req.body;
+    const { user_id, category_id } = req.body;
+    const filename = req.file.originalname; // Nombre original del archivo
+    const filepath = req.file.path; // Ruta donde se guardó el archivo
 
     try {
-      const result = await pool.query('INSERT INTO resources (filename, user_id, category_id) VALUES ($1, $2, $3) RETURNING *',
-        [filename, user_id, category_id]
+      const result = await pool.query('INSERT INTO resources (filename, filepath, user_id, category_id) VALUES ($1, $2, $3, $4) RETURNING *',
+        [filename, filepath, user_id, category_id]
       );
       await logAction(`Recurso creado con ID: ${result.rows[0].id}`);
       res.status(201).json({ message: 'Recurso creado con éxito' });
@@ -260,17 +282,29 @@ app.post(
   }
 );
 
-app.put('/api/resources/:id', async (req, res) => {
+app.put('/api/resources/:id', upload.single('file'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { filename, user_id, category_id } = req.body;
+    const { user_id, category_id } = req.body;
 
-    // Validar que al menos un campo se esté actualizando
-    if (!filename && !user_id && !category_id) {
-      return res.status(400).json({ message: 'Debe proporcionar al menos un campo para actualizar.' });
+    let filename, filepath;
+    if (req.file) {
+      filename = req.file.originalname;
+      filepath = req.file.path;
     }
 
-    const result = await pool.query('UPDATE resources SET filename = COALESCE($1, filename), user_id = COALESCE($2, user_id), category_id = COALESCE($3, category_id) WHERE id = $4 RETURNING *', [filename, user_id, category_id, id]);
+    // Construimos la consulta dinámicamente para actualizar solo los campos proporcionados
+    const fields = [];
+    const values = [];
+    if (filename) { fields.push(`filename = $${fields.length + 1}`); values.push(filename); }
+    if (filepath) { fields.push(`filepath = $${fields.length + 1}`); values.push(filepath); }
+    if (user_id) { fields.push(`user_id = $${fields.length + 1}`); values.push(user_id); }
+    if (category_id) { fields.push(`category_id = $${fields.length + 1}`); values.push(category_id); }
+
+    if (fields.length === 0) return res.status(400).json({ message: 'No hay campos para actualizar.' });
+
+    const query = `UPDATE resources SET ${fields.join(', ')} WHERE id = $${fields.length + 1} RETURNING *`;
+    const result = await pool.query(query, [...values, id]);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Recurso no encontrado.' });
