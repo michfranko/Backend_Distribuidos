@@ -15,7 +15,8 @@ const app = express();
 // Lista de orígenes permitidos (desarrollo local y producción)
 app.use(cors({
   origin: [
-    'http://34.122.120.150'
+    'http://34.122.120.150',
+    'http://34.128.148.231'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
