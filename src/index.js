@@ -12,13 +12,15 @@ const app = express();
 // 1. Configuración General del Servidor
 
 // Lista de orígenes permitidos (desarrollo local y producción)
-const allowedOrigins = ['http://34.122.120.150'];
-
 app.use(cors({
-  origin: process.env.FRONTEND_URL,
+  origin: [
+    'http://34.122.120.150',
+    'http://localhost:4200' // si usas Angular en local
+  ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 
 // --- Configuración de Multer para subida de archivos ---
 const storage = multer.diskStorage({
