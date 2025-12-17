@@ -15,15 +15,9 @@ const app = express();
 const allowedOrigins = ['http://34.122.120.150'];
 
 app.use(cors({
-  origin: function (origin, callback) {
-    // Permite peticiones sin origen (como Postman o apps móviles)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'La política de CORS para este sitio no permite el acceso desde el origen especificado.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  }
+  origin: process.env.FRONTEND_URL,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // --- Configuración de Multer para subida de archivos ---
