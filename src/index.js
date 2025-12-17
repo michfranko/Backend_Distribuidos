@@ -11,11 +11,20 @@ const app = express();
 // 1. Configuración General del Servidor
 
 // Lista de orígenes permitidos (desarrollo local y producción)
-const allowedOrigins = ['http://localhost:5173', 'http://34.122.120.150'];
+const allowedOrigins = ['http://34.122.120.150'];
 
 app.use(cors({
-  origin: allowedOrigins
+  origin: function (origin, callback) {
+    // Permite peticiones sin origen (como Postman o apps móviles)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'La política de CORS para este sitio no permite el acceso desde el origen especificado.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  }
 }));
+
 
 app.use(express.json());
 
@@ -239,8 +248,8 @@ app.post(
 
     try {
       const result = await pool.query(
-        'INSERT INTO resources (filename, filepath, user_id, category_id) VALUES ($1, $2, $3, $4) RETURNING *',
-        [filename, filepath, user_id, category_id]
+        'INSERT INTO resources (filename, user_id, category_id) VALUES ($1, $2, $3) RETURNING *',
+        [filename, user_id, category_id]
       );
       await logAction(`Recurso creado con ID: ${result.rows[0].id}`);
       res.status(201).json({ message: 'Recurso creado con éxito' });
@@ -295,7 +304,7 @@ app.delete('/api/resources/:id', async (req, res) => {
 // --- Endpoint para Logs (/api/logs) ---
 app.get('/api/logs', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM logs ORDER BY id DESC');
+    const result = await pool.query('SELECT * FROM logs ORDER BY timestamp DESC');
     res.json(result.rows);
   } catch (error) {
     console.error('Error al obtener logs:', error);
