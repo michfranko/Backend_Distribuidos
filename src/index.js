@@ -11,8 +11,7 @@ const app = express();
 
 // 1. Configuración General del Servidor
 
-// Lista de orígenes permitidos (desarrollo local y producción)
-const allowedOrigins = ['http://34.122.120.150'];
+
 
 app.use(cors({
   origin: process.env.FRONTEND_URL,
@@ -226,7 +225,14 @@ app.delete('/api/users/:id', async (req, res) => {
 app.get('/api/resources', async (req, res) => {
   try {
     const query = `
-      SELECT r.id, r.filename, r.filepath, r.upload_date, r.user_id, u.username, r.category_id, c.name as category_name
+      SELECT 
+        r.id,
+        r.filename,
+        r.upload_date,
+        r.user_id,
+        u.username,
+        r.category_id,
+        c.name AS category_name
       FROM resources r
       JOIN users u ON r.user_id = u.id
       JOIN categories c ON r.category_id = c.id
@@ -239,6 +245,7 @@ app.get('/api/resources', async (req, res) => {
     res.status(500).json({ message: 'Error interno del servidor al obtener recursos.' });
   }
 });
+
 
 app.post(
   '/api/resources',
