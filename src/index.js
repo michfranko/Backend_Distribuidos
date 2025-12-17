@@ -11,7 +11,8 @@ const app = express();
 
 // 1. Configuración General del Servidor
 
-
+// Lista de orígenes permitidos (desarrollo local y producción)
+const allowedOrigins = ['http://34.122.120.150'];
 
 app.use(cors({
   origin: process.env.FRONTEND_URL,
@@ -225,14 +226,7 @@ app.delete('/api/users/:id', async (req, res) => {
 app.get('/api/resources', async (req, res) => {
   try {
     const query = `
-      SELECT 
-        r.id,
-        r.filename,
-        r.upload_date,
-        r.user_id,
-        u.username,
-        r.category_id,
-        c.name AS category_name
+      SELECT r.id, r.filename, r.path, r.upload_date, r.user_id, u.username, r.category_id, c.name as category_name
       FROM resources r
       JOIN users u ON r.user_id = u.id
       JOIN categories c ON r.category_id = c.id
@@ -245,7 +239,6 @@ app.get('/api/resources', async (req, res) => {
     res.status(500).json({ message: 'Error interno del servidor al obtener recursos.' });
   }
 });
-
 
 app.post(
   '/api/resources',
@@ -265,11 +258,11 @@ app.post(
 
     const { user_id, category_id } = req.body;
     const filename = req.file.originalname; // Nombre original del archivo
-    const filepath = req.file.path; // Ruta donde se guardó el archivo
+    const path = req.file.path; // Ruta donde se guardó el archivo
 
     try {
-      const result = await pool.query('INSERT INTO resources (filename, filepath, user_id, category_id) VALUES ($1, $2, $3, $4) RETURNING *',
-        [filename, filepath, user_id, category_id]
+      const result = await pool.query('INSERT INTO resources (filename, path, user_id, category_id) VALUES ($1, $2, $3, $4) RETURNING *',
+        [filename, path, user_id, category_id]
       );
       await logAction(`Recurso creado con ID: ${result.rows[0].id}`);
       res.status(201).json({ message: 'Recurso creado con éxito' });
@@ -288,17 +281,17 @@ app.put('/api/resources/:id', upload.single('file'), async (req, res) => {
     const { id } = req.params;
     const { user_id, category_id } = req.body;
 
-    let filename, filepath;
+    let filename, path;
     if (req.file) {
       filename = req.file.originalname;
-      filepath = req.file.path;
+      path = req.file.path;
     }
 
     // Construimos la consulta dinámicamente para actualizar solo los campos proporcionados
     const fields = [];
     const values = [];
     if (filename) { fields.push(`filename = $${fields.length + 1}`); values.push(filename); }
-    if (filepath) { fields.push(`filepath = $${fields.length + 1}`); values.push(filepath); }
+    if (path) { fields.push(`path = $${fields.length + 1}`); values.push(path); }
     if (user_id) { fields.push(`user_id = $${fields.length + 1}`); values.push(user_id); }
     if (category_id) { fields.push(`category_id = $${fields.length + 1}`); values.push(category_id); }
 
