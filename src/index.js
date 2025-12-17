@@ -9,9 +9,14 @@ const { body, validationResult } = require('express-validator');
 const app = express();
 
 // 1. Configuración General del Servidor
+
+// Lista de orígenes permitidos (desarrollo local y producción)
+const allowedOrigins = ['http://localhost:5173', 'http://34.122.120.150'];
+
 app.use(cors({
-  origin: 'http://localhost:5173' // Acepta peticiones solo desde tu frontend
+  origin: allowedOrigins
 }));
+
 app.use(express.json());
 
 app.get('/healthz', (req, res) => {
@@ -105,7 +110,7 @@ app.delete('/api/categories/:id', async (req, res) => {
 app.get('/api/users', async (req, res) => {
   try {
     // Excluimos el campo password de la respuesta por seguridad
-    const result = await pool.query('SELECT id, username, email, created_at FROM users ORDER BY username ASC;');
+    const result = await pool.query('SELECT id, username, email FROM users ORDER BY username ASC;');
     res.json(result.rows);
   } catch (error) {
     console.error('Error al obtener usuarios:', error);
@@ -129,7 +134,7 @@ app.post('/api/users',
       const hashedPassword = await bcrypt.hash(password, salt);
 
       const result = await pool.query(
-        'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id, username, email',
+        'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id, username',
         [username, email, hashedPassword]
       );
       await logAction(`Nuevo usuario creado: ${username}`);
@@ -137,7 +142,7 @@ app.post('/api/users',
     } catch (error) {
       console.error('Error al crear usuario:', error);
       if (error.code === '23505') { // Error de unicidad
-        return res.status(400).json({ message: 'El email o nombre de usuario ya está en uso.' });
+        return res.status(400).json({ message: 'El nombre de usuario ya está en uso.' });
       }
       res.status(500).json({ message: 'Error interno del servidor.' });
     }
@@ -175,7 +180,7 @@ app.put('/api/users/:id', async (req, res) => {
     } catch (error) {
         console.error('Error al actualizar usuario:', error);
         if (error.code === '23505') {
-            return res.status(400).json({ message: 'El email o nombre de usuario ya está en uso por otra cuenta.' });
+            return res.status(400).json({ message: 'El nombre de usuario ya está en uso por otra cuenta.' });
         }
         res.status(500).json({ message: 'Error interno del servidor.' });
     }
@@ -203,7 +208,7 @@ app.delete('/api/users/:id', async (req, res) => {
 app.get('/api/resources', async (req, res) => {
   try {
     const query = `
-      SELECT r.id, r.filename, r.filepath, r.upload_date, r.user_id, u.username, r.category_id, c.name as category_name
+      SELECT r.id, r.filename, r.upload_date, r.user_id, u.username, r.category_id, c.name as category_name
       FROM resources r
       JOIN users u ON r.user_id = u.id
       JOIN categories c ON r.category_id = c.id
@@ -244,7 +249,7 @@ app.post(
       if (error.code === '23503') {
         return res.status(400).json({ message: 'El usuario o la categoría especificada no existe.' });
       }
-      res.status(500).json({ message: 'Error interno del servidor al crear el recurso.' });
+      res.status(500).json({ message: 'Error interno del servidor.' });
     }
   }
 );
@@ -290,7 +295,7 @@ app.delete('/api/resources/:id', async (req, res) => {
 // --- Endpoint para Logs (/api/logs) ---
 app.get('/api/logs', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM logs ORDER BY timestamp DESC');
+    const result = await pool.query('SELECT * FROM logs ORDER BY id DESC');
     res.json(result.rows);
   } catch (error) {
     console.error('Error al obtener logs:', error);
