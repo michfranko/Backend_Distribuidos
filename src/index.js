@@ -4,6 +4,7 @@ const cors = require('cors');
 const pool = require('./db');
 const bcrypt = require('bcrypt');
 const { body, validationResult } = require('express-validator');
+const { Storage } = require('@google-cloud/storage');
 const multer = require('multer');
 
 
@@ -14,27 +15,26 @@ const app = express();
 // Lista de orígenes permitidos (desarrollo local y producción)
 app.use(cors({
   origin: [
-    'http://34.122.120.150',
-    'http://localhost:4200' // si usas Angular en local
+    'http://34.122.120.150'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// --- Configuración de Google Cloud Storage ---
+// Asegúrate de que tu entorno de Cloud Run tenga los permisos de IAM correctos
+// y que las credenciales estén configuradas automáticamente.
+const storageClient = new Storage();
+const bucketName = 'portal-media-bucket-123'; // El nombre de tu bucket
+const bucket = storageClient.bucket(bucketName);
 
 // --- Configuración de Multer para subida de archivos ---
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // Asegúrate de que la carpeta 'uploads' exista en la raíz de tu proyecto
-  },
-  filename: function (req, file, cb) {
-    // Genera un nombre de archivo único para evitar colisiones
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + '-' + file.originalname);
-  }
+// Usamos memoryStorage para mantener el archivo en memoria como un buffer
+// antes de subirlo a Google Cloud Storage.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // Límite de 10MB por archivo
 });
-
-const upload = multer({ storage: storage });
 
 
 app.use(express.json());
@@ -260,13 +260,36 @@ app.post(
 
     const { user_id, category_id } = req.body;
     const filename = req.file.originalname; // Nombre original del archivo
-    const path = req.file.path; // Ruta donde se guardó el archivo
 
     try {
+      // Subir el archivo a Google Cloud Storage
+      const blob = bucket.file(`${Date.now()}-${filename.replace(/ /g, "_")}`);
+      const blobStream = blob.createWriteStream({
+        resumable: false,
+        contentType: req.file.mimetype,
+      });
+
+      await new Promise((resolve, reject) => {
+        blobStream.on('error', (err) => {
+          console.error('Error al subir a GCS:', err);
+          reject(new Error('No se pudo subir el archivo.'));
+        });
+
+        blobStream.on('finish', () => {
+          resolve();
+        });
+
+        blobStream.end(req.file.buffer);
+      });
+
+      // La URL pública del archivo en GCS
+      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
+
+      // Guardar la información en la base de datos
       const result = await pool.query('INSERT INTO resources (filename, path, user_id, category_id) VALUES ($1, $2, $3, $4) RETURNING *',
-        [filename, path, user_id, category_id]
+        [filename, publicUrl, user_id, category_id]
       );
-      await logAction(`Recurso creado con ID: ${result.rows[0].id}`);
+      await logAction(`Recurso creado: ${filename} (ID: ${result.rows[0].id})`);
       res.status(201).json({ message: 'Recurso creado con éxito' });
     } catch (error) {
       console.error('Error al guardar en la base de datos:', error);
@@ -283,17 +306,51 @@ app.put('/api/resources/:id', upload.single('file'), async (req, res) => {
     const { id } = req.params;
     const { user_id, category_id } = req.body;
 
-    let filename, path;
+    // Obtener la ruta del archivo antiguo para poder borrarlo si se sube uno nuevo
+    const oldResourceResult = await pool.query('SELECT path FROM resources WHERE id = $1', [id]);
+    if (oldResourceResult.rowCount === 0) {
+      return res.status(404).json({ message: 'Recurso no encontrado.' });
+    }
+    const oldPath = oldResourceResult.rows[0].path;
+
+    let newFilename, newPath;
     if (req.file) {
-      filename = req.file.originalname;
-      path = req.file.path;
+      // 1. Subir el nuevo archivo
+      newFilename = req.file.originalname;
+      const blob = bucket.file(`${Date.now()}-${newFilename.replace(/ /g, "_")}`);
+      const blobStream = blob.createWriteStream({ resumable: false, contentType: req.file.mimetype });
+
+      await new Promise((resolve, reject) => {
+        blobStream.on('error', reject);
+        blobStream.on('finish', resolve);
+        blobStream.end(req.file.buffer);
+      });
+
+      newPath = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
+
+      // 2. Borrar el archivo antiguo de GCS si existe
+      if (oldPath) {
+        try {
+          const oldFilenameInBucket = oldPath.split('/').pop();
+          await bucket.file(oldFilenameInBucket).delete();
+        } catch (gcsError) {
+          // Si el archivo no existe en GCS, no es un error crítico.
+          console.warn(`No se pudo borrar el archivo antiguo de GCS: ${oldPath}`, gcsError.message);
+        }
+      }
     }
 
     // Construimos la consulta dinámicamente para actualizar solo los campos proporcionados
     const fields = [];
     const values = [];
-    if (filename) { fields.push(`filename = $${fields.length + 1}`); values.push(filename); }
-    if (path) { fields.push(`path = $${fields.length + 1}`); values.push(path); }
+    if (newFilename) {
+      fields.push(`filename = $${fields.length + 1}`);
+      values.push(newFilename);
+    }
+    if (newPath) {
+      fields.push(`path = $${fields.length + 1}`);
+      values.push(newPath);
+    }
     if (user_id) { fields.push(`user_id = $${fields.length + 1}`); values.push(user_id); }
     if (category_id) { fields.push(`category_id = $${fields.length + 1}`); values.push(category_id); }
 
@@ -316,7 +373,24 @@ app.put('/api/resources/:id', upload.single('file'), async (req, res) => {
 app.delete('/api/resources/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await pool.query('DELETE FROM resources WHERE id = $1', [id]);
+
+    // Primero, obtenemos la ruta del archivo para poder borrarlo de GCS
+    const resourceResult = await pool.query('SELECT path FROM resources WHERE id = $1', [id]);
+    if (resourceResult.rowCount > 0) {
+      const path = resourceResult.rows[0].path;
+      if (path) {
+        try {
+          const filenameInBucket = path.split('/').pop();
+          await bucket.file(filenameInBucket).delete();
+        } catch (gcsError) {
+          // Si el archivo no se encuentra en GCS, puede que ya haya sido borrado.
+          // Lo registramos pero continuamos para borrar el registro de la BD.
+          console.warn(`Archivo no encontrado en GCS para borrar: ${path}`, gcsError.message);
+        }
+      }
+    }
+
+    const result = await pool.query('DELETE FROM resources WHERE id = $1 RETURNING *', [id]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Recurso no encontrado.' });
     }
