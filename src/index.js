@@ -243,12 +243,9 @@ app.post(
     }
 
     const { filename, user_id, category_id } = req.body;
-    // Generación automática de filepath y upload_date
-    const filepath = `/uploads/${filename}`; // Ejemplo de generación de ruta
 
     try {
-      const result = await pool.query(
-        'INSERT INTO resources (filename, user_id, category_id) VALUES ($1, $2, $3) RETURNING *',
+      const result = await pool.query('INSERT INTO resources (filename, user_id, category_id) VALUES ($1, $2, $3) RETURNING *',
         [filename, user_id, category_id]
       );
       await logAction(`Recurso creado con ID: ${result.rows[0].id}`);
