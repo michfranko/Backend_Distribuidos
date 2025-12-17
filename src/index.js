@@ -40,7 +40,7 @@ const upload = multer({
 
 app.use(express.json());
 
-app.get('/healthz', (req, res) => {
+app.get('/health', (req, res) => {
   res.send('OK');
 });
 
